@@ -9,8 +9,60 @@ from chatkit.widgets import (
     Caption,
     Box,
     Spacer,
+    Chart,
+    BarSeries,
+    Divider,
+    LineSeries,  # Import Chart components
 )
 
+def build_sales_dashboard(data: list, region: str):
+    """
+    Builds a Chart widget visualizing Revenue vs Profit.
+    data format: [{"month": "Jan", "revenue": 5000, "profit": 1200}, ...]
+    """
+    return Card(
+        size="lg",
+        children=[
+            Title(value=f"{region} Sales Performance", size="md"),
+            Text(value="Revenue vs. Net Profit (YTD)", size="sm", color="secondary"),
+            Spacer(minSize=12),
+            Chart(
+                type="Chart",
+                data=data,
+                height=300,
+                # X-Axis Configuration
+                xAxis={"dataKey": "month"}, 
+                # Data Series Configuration
+                series=[
+                    BarSeries(
+                        dataKey="revenue", 
+                        label="Revenue", 
+                        color="blue" # ChatKit color token
+                    ),
+                    LineSeries(
+                        dataKey="profit", 
+                        label="Net Profit", 
+                        color="green", 
+                        curveType="monotone" # Smooth lines
+                    )
+                ],
+                showTooltip=True,
+                showLegend=True
+            ),
+            Divider(spacing=4),
+            Row(
+                justify="end",
+                children=[
+                    Button(
+                        label="Download CSV", 
+                        iconStart="lucide:download", 
+                        variant="outline",
+                        onClickAction={"type": "download_report", "payload": {"region": region}}
+                    )
+                ]
+            )
+        ]
+    )
 
 def build_vibrant_weather_widget(location: str, temperature: str, condition_desc: str):
     """Builds the high-fidelity weather card."""
@@ -86,28 +138,5 @@ def build_clean_theme_widget(reasoning: str, theme_data: dict):
                 block=True,
                 onClickAction={"type": "apply_theme_effect", "payload": theme_data},
             ),
-        ],
-    )
-
-
-def build_feedback_form():
-    """Builds an interactive form."""
-    return Card(
-        asForm=True,
-        children=[
-            Form(
-                onSubmitAction={
-                    "type": "submit_feedback",
-                    "payload": {},  # Form inputs auto-merge into payload
-                },
-                children=[
-                    Title(value="Feedback"),
-                    Text(value="How was your experience today?"),
-                    Input(
-                        name="user_comment", placeholder="Type here...", required=True
-                    ),
-                    Button(label="Submit Feedback", submit=True),
-                ],
-            )
         ],
     )

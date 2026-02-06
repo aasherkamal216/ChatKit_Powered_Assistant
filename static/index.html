@@ -96,7 +96,7 @@
             greeting: "Hello! I'm your ProAgent.",
             prompts: [
                 { label: "Search AI News", prompt: "Search the web for the latest news on OpenAI ChatKit", icon: "lucide:search" },
-                { label: "Check my Order", prompt: "What is the status of @Order #123?", icon: "lucide:package" },
+                { label: "Analyze Sales", prompt: "Analyze sales performance for North America.", icon: "lucide:bar-chart" },
                 { label: "Customize UI", prompt: "I want a new theme. Make it dark mode with a purple neon style and sharp corners.", icon: "lucide:palette" },
                 { label: "Check Weather", prompt: "What is the weather in San Francisco?", icon: "lucide:sun" },
                 { label: "Generate Image", prompt: "Generate an image of a futuristic city", icon: "lucide:image" },
@@ -109,11 +109,10 @@
             tools: [
                 { id: "web_search", label: "Web Search", icon: "lucide:globe" },
                 { id: "get_weather", label: "Weather", icon: "lucide:sun" },
-                { id: "show_feedback_form", label: "Feedback", icon: "star" },
                 { id: "preview_theme", label: "Theme Creation", icon: "lucide:paintbrush" }
             ],
             models: [
-                { id: "gpt-5.1", label: "GPT 5.1" , default: true },
+                { id: "gpt-5-mini", label: "GPT 5 Mini" , default: true },
                 { id: "gpt-5.2", label: "GPT 5.2" }
             ]
         },

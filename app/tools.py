@@ -1,18 +1,17 @@
-# app/tools.py
-from typing import Literal, List, Optional
+from typing import Literal, List
+import random
+import asyncio
 from pydantic import BaseModel, Field
 from agents import function_tool, RunContextWrapper
 from chatkit.agents import AgentContext
+from chatkit.types import Workflow, CustomTask, DurationSummary
 from .widgets import (
     build_vibrant_weather_widget,
     build_clean_theme_widget,
-    build_feedback_form,
+    build_sales_dashboard,
 )
 
-from chatkit.widgets import Card, Title, Text, Button, Row
-import json
-
-# We define a global mapping of mock data for entity lookup
+# Shared Mock Data (Used by Server for Deep Entity Integration)
 MOCK_ENTITIES = {
     "order_123": {
         "title": "Order #123",
@@ -20,20 +19,9 @@ MOCK_ENTITIES = {
         "items": ["Laptop", "Mouse"],
     },
     "order_456": {"title": "Order #456", "status": "Processing", "items": ["Monitor"]},
+    "doc_policy": {"title": "Return Policy", "description": "Return Policy details..."},
+    "doc_shipping": {"title": "Shipping Rates", "description": "Shipping Rates details..."},
 }
-
-
-@function_tool
-async def get_weather(ctx: RunContextWrapper[AgentContext], location: str):
-    """Get the current weather with a vibrant UI card."""
-    # Realistically you'd call a weather API here
-    widget = build_vibrant_weather_widget(
-        location=location,
-        temperature="72",
-        condition_desc="Sunny sky and warm temperatures are expected for the rest of the afternoon.",
-    )
-    await ctx.context.stream_widget(widget)
-    return f"Showed weather card for {location} with temperature {temperature} and condition: {condition_desc}:"
 
 
 class FontSource(BaseModel):
@@ -54,17 +42,13 @@ async def preview_theme(
     accent_color: str,
     font_family: str,
     font_family_mono: str,
-    font_sources: List[FontSource],  # Use the model list here
+    font_sources: List[FontSource],
     accent_level: Literal[0, 1, 2, 3] = 2,
     base_font_size: Literal[14, 15, 16, 17, 18] = 16,
     grayscale_hue: int = 210,
 ):
     """
-    Propose a fully customized UI theme including typography and external font loading.
-    - reasoning: Explain why these fonts and colors match the requested style.
-    - accent_color: Valid Hex code.
-    - font_family: Full CSS font-family string.
-    - font_sources: List of objects containing 'family' and 'src' (URL to .woff2).
+    Propose a fully customized UI theme.
     """
     theme_data = {
         "colorScheme": color_scheme,
@@ -84,21 +68,91 @@ async def preview_theme(
 
     widget = build_clean_theme_widget(reasoning, theme_data)
     await ctx.context.stream_widget(widget)
-    return "Theme proposal with custom typography displayed."
 
+    return "Theme proposal displayed."
 
 @function_tool
-async def show_feedback_form(ctx: RunContextWrapper[AgentContext]):
-    """Display a feedback form to the user."""
-    widget = build_feedback_form()
+async def get_weather(ctx: RunContextWrapper[AgentContext], location: str):
+    """Get the current weather with a vibrant UI card."""
+    # Realistically you'd call a weather API here
+    widget = build_vibrant_weather_widget(
+        location=location,
+        temperature="72",
+        condition_desc="Sunny sky and warm temperatures are expected for the rest of the afternoon.",
+    )
     await ctx.context.stream_widget(widget)
-    return "Feedback form displayed."
-
+    return f"Showed weather card for {location}."
 
 @function_tool
-async def get_order_details(ctx: RunContextWrapper[AgentContext], order_id: str):
-    """Fetch details for a specific order ID (e.g. order_123). Use this format: order_xxx"""
-    order = MOCK_ENTITIES.get(order_id)
-    if order:
-        return order
-    return {"error": "Order not found"}
+async def analyze_sales_data(
+    ctx: RunContextWrapper[AgentContext], 
+    region: str = "Global"
+):
+    """
+    Fetches and analyzes sales data.
+    """
+    
+    # 1. Initialize the Visual Workflow
+    # This creates a box in the chat that will list the steps
+    workflow = Workflow(
+        type="custom",
+        tasks=[
+            CustomTask(title="Initializing Database Connection...", status_indicator="loading")
+        ],
+        expanded=True, # Start with the workflow expanded to show the steps in real-time
+    )
+    await ctx.context.start_workflow(workflow)
+    
+    # --- Step 1: Simulated Database Query ---
+    await asyncio.sleep(1.0) # Fake latency
+    
+    # Update first task to complete
+    task_1 = workflow.tasks[0]
+    task_1.title = "Connected to Sales DB"
+    task_1.status_indicator = "complete"
+    await ctx.context.update_workflow_task(task_1, 0)
+
+    # --- Step 2: Aggregation ---
+    # Add a new task dynamically
+    task_2 = CustomTask(title=f"Aggregating records for {region}...", status_indicator="loading")
+    await ctx.context.add_workflow_task(task_2)
+    
+    await asyncio.sleep(1.5) # Fake heavy computation
+    
+    task_2.title = f"Aggregated 14,203 records for {region}"
+    task_2.status_indicator = "complete"
+    # We have to fetch the index, usually it's len(tasks)-1
+    await ctx.context.update_workflow_task(task_2, 1)
+
+    # --- Step 3: Finalizing ---
+    task_3 = CustomTask(title="Generating Visualization...", status_indicator="loading")
+    await ctx.context.add_workflow_task(task_3)
+    
+    await asyncio.sleep(0.5)
+    
+    task_3.title = "Report Generated"
+    task_3.status_indicator = "complete"
+    await ctx.context.update_workflow_task(task_3, 2)
+
+    # 2. Close the Workflow UI
+    # Passing a summary collapses the steps into a nice header
+    await ctx.context.end_workflow(
+        summary=DurationSummary(duration=3) # "Completed in 3s"
+    )
+
+    # 3. Generate Mock Data
+    months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun"]
+    data = []
+    for m in months:
+        rev = random.randint(4000, 9000)
+        data.append({
+            "month": m,
+            "revenue": rev,
+            "profit": int(rev * 0.25) # 25% margin
+        })
+
+    # 4. Stream the Chart Widget
+    widget = build_sales_dashboard(data, region)
+    await ctx.context.stream_widget(widget)
+
+    return f"Sales analysis for {region} completed. Chart displayed."

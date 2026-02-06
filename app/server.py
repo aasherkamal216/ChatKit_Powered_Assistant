@@ -1,6 +1,7 @@
 import io
 import base64
 import asyncio
+import json
 from pathlib import Path
 from typing import AsyncIterator, Any, List
 from datetime import datetime
@@ -8,7 +9,7 @@ from openai import AsyncOpenAI
 from openai.types.responses import ResponseInputTextParam, ResponseInputImageParam
 import os
 
-from chatkit.server import ChatKitServer, stream_widget
+from chatkit.server import ChatKitServer
 from chatkit.types import (
     ThreadMetadata,
     UserMessageItem,
@@ -25,8 +26,8 @@ from chatkit.types import (
     UserMessageTextContent,
     ProgressUpdateEvent,
     ClientEffectEvent,
-    Workflow,
-    CustomTask,
+    Annotation,
+    URLSource,
 )
 from chatkit.agents import (
     AgentContext,
@@ -38,6 +39,7 @@ from agents import Runner
 
 from .types import RequestContext
 from .agent import my_agent
+from .tools import MOCK_ENTITIES 
 
 client = AsyncOpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
 UPLOAD_DIR = Path("uploads")
@@ -47,6 +49,29 @@ class LocalConverter(ThreadItemConverter):
     async def tag_to_message_content(
         self, tag: UserMessageTagContent
     ) -> ResponseInputTextParam:
+        """
+        Deep Entity Integration:
+        Instead of just passing the tag name, we look up the ID in our database (MOCK_ENTITIES)
+        and inject the actual data into the prompt.
+        """
+        entity_id = tag.id
+        entity_data = MOCK_ENTITIES.get(entity_id)
+
+        if entity_data:
+            # Inject rich context so the model knows the status without tool calling
+            context_block = (
+                f"<ORDER_CONTEXT id='{entity_id}'>\n"
+                f"  Title: {entity_data.get('title')}\n"
+                f"  Status: {entity_data.get('status')}\n"
+                f"  Items: {', '.join(entity_data.get('items', []))}\n"
+                f"</ORDER_CONTEXT>"
+            )
+            return ResponseInputTextParam(
+                type="input_text", 
+                text=f"\n[User tagged an entity]\n{context_block}\n"
+            )
+        
+        # Fallback if ID not found
         return ResponseInputTextParam(
             type="input_text", text=f"\n[User tagged: {tag.text}]\n"
         )
@@ -87,6 +112,19 @@ class LocalResponseConverter(ResponseStreamConverter):
     ) -> str:
         return f"data:image/png;base64,{base64_image}"
 
+    async def url_citation_to_annotation(self, citation) -> Annotation:
+        """
+        Enable Citations:
+        Converts OpenAI Response citations into interactive ChatKit Annotations.
+        """
+        return Annotation(
+            source=URLSource(
+                url=citation.url,
+                title=citation.title or "Web Source",
+            ),
+            index=citation.end_index,
+        )
+
 
 class MyChatKitServer(ChatKitServer[RequestContext]):
 
@@ -102,6 +140,7 @@ class MyChatKitServer(ChatKitServer[RequestContext]):
         )
         items = list(reversed(items_page.data))
 
+        # Auto-title generation for new threads
         if len(items) <= 1 and input_message:
             asyncio.create_task(self._generate_thread_title(thread, items, context))
 
@@ -109,43 +148,30 @@ class MyChatKitServer(ChatKitServer[RequestContext]):
             thread=thread, store=self.store, request_context=context
         )
 
-        # --- Visual Workflow for Search ---
-        # If the user input looks like a search, we show a workflow item
-        user_text = "".join(
-            [p.text for p in input_message.content if hasattr(p, "text")]
-        )
-        if "search" in user_text.lower() or "find" in user_text.lower():
-            await agent_context.start_workflow(
-                Workflow(
-                    type="custom",
-                    tasks=[
-                        CustomTask(
-                            title="Initializing search...", status_indicator="loading"
-                        )
-                    ],
-                )
-            )
-
         converter = LocalConverter()
         agent_inputs = await converter.to_agent_input(items)
 
-        if input_message and input_message.inference_options:
-            selected_model = input_message.inference_options.model
-            if selected_model:
 
-                my_agent.model = selected_model
-        result = Runner.run_streamed(my_agent, agent_inputs, context=agent_context)
+        if input_message and input_message.inference_options:
+            # 1. Handle Model Switching
+            if input_message.inference_options.model:
+                my_agent.model = input_message.inference_options.model
+
+            # 2. Handle Tool Forcing
+            if input_message.inference_options.tool_choice:
+                tool_id = input_message.inference_options.tool_choice.id
+                my_agent.model_settings.tool_choice = tool_id
+
+        # Pass run_kwargs to the runner
+        result = Runner.run_streamed(
+            my_agent, 
+            agent_inputs, 
+            context=agent_context,
+        )
 
         async for event in stream_agent_response(
             agent_context, result, converter=LocalResponseConverter(partial_images=3)
         ):
-            # If the agent starts a tool, update the workflow
-            if (
-                event.type == "thread.item.added"
-                and event.item.type == "assistant_message"
-            ):
-                await agent_context.end_workflow()
-
             yield event
 
     async def action(
@@ -156,15 +182,15 @@ class MyChatKitServer(ChatKitServer[RequestContext]):
         context: RequestContext,
     ) -> AsyncIterator[ThreadStreamEvent]:
 
-        # --- Handle Theme Application Effect ---
         if action.type == "apply_theme_effect":
             # 1. Send a "Thinking" progress update
             yield ProgressUpdateEvent(text="Applying new styles...", icon="sparkle")
-            await asyncio.sleep(1)  # Fake delay for effect
+            await asyncio.sleep(0.5) 
 
-            # The payload now contains the full theme dictionary built by the tool
+            # 2. Trigger Client Effect
             yield ClientEffectEvent(name="update_ui_theme", data=action.payload)
 
+            # 3. Respond in chat
             yield ThreadItemDoneEvent(
                 item=AssistantMessageItem(
                     id=self.store.generate_item_id("message", thread, context),
@@ -191,9 +217,7 @@ class MyChatKitServer(ChatKitServer[RequestContext]):
     async def _generate_thread_title(
         self, thread: ThreadMetadata, items: List[Any], context: RequestContext
     ):
-        """Background task to summarize the conversation into a title."""
         try:
-            # Find the first user text
             first_text = "New Conversation"
             for item in items:
                 if isinstance(item, UserMessageItem):
@@ -203,7 +227,6 @@ class MyChatKitServer(ChatKitServer[RequestContext]):
                             break
                     break
 
-            # Call GPT for a quick summary
             res = await client.chat.completions.create(
                 model="gpt-4o-mini",
                 messages=[
@@ -216,11 +239,8 @@ class MyChatKitServer(ChatKitServer[RequestContext]):
             )
             new_title = res.choices[0].message.content.strip().replace('"', "")
 
-            # Update Store
             thread.title = new_title
             await self.store.save_thread(thread, context)
-            # Note: ChatKit handles updating the UI title automatically
-            # if the store is updated during the request flow.
         except Exception as e:
             print(f"Titling error: {e}")
 
