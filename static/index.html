@@ -63,28 +63,34 @@
         { id: "doc_shipping", title: "Shipping Rates", group: "Documentation", icon: "document", interactive: true, data: { type: 'doc' } }
     ];
 
-    // 4. Define Initial Options
-    // We store this in a variable so we can merge updates (like themes) later.
+// 4. Define Initial Options
     let currentOptions = {
         api: {
             url: 'http://localhost:8000/chatkit',
-            // Inject the User ID header into every request
             fetch: (url, options) => {
-                options.headers = {
-                    ...options.headers,
-                    'X-ChatKit-User': userId
-                };
+                options.headers = { ...options.headers, 'X-ChatKit-User': userId };
                 return fetch(url, options);
             },
-            uploadStrategy: {
-                type: 'direct',
-                uploadUrl: 'http://localhost:8000/upload'
-            },
+            uploadStrategy: { type: 'direct', uploadUrl: 'http://localhost:8000/upload' },
             domainKey: 'local-dev' 
         },
         theme: {
             colorScheme: 'light',
-            radius: 'pill'
+            radius: 'pill',
+            typography: {
+                baseSize: 16,
+                fontFamily: '"OpenAI Sans", system-ui, sans-serif',
+                fontFamilyMono: 'ui-monospace, Consolas, monospace',
+                fontSources: [
+                    {
+                        family: 'OpenAI Sans',
+                        src: 'https://cdn.openai.com/common/fonts/openai-sans/v2/OpenAISans-Regular.woff2',
+                        weight: 400,
+                        style: 'normal',
+                        display: 'swap'
+                    }
+                ]
+            }
         },
         startScreen: {
             greeting: "Hello! I'm your ProAgent.",
@@ -107,8 +113,8 @@
                 { id: "preview_theme", label: "Theme Creation", icon: "lucide:paintbrush" }
             ],
             models: [
-                { id: "gpt-5.1", label: "GPT-5.1" },
-                { id: "gpt-5-mini", label: "GPT-5 Mini", default: true }
+                { id: "gpt-5.1", label: "GPT 5.1" , default: true },
+                { id: "gpt-5.2", label: "GPT 5.2" }
             ]
         },
         history: {
@@ -153,18 +159,24 @@
     chat.addEventListener('chatkit.effect', (event) => {
         const { name, data } = event.detail;
         
-        console.log(`Effect received: ${name}`, data);
-
         if (name === 'update_ui_theme') {
-            // Apply the new theme data sent by the server tool
+            console.log("Applying theme with typography:", data);
+            
+            // 1. Update the local configuration object
             currentOptions = {
                 ...currentOptions,
-                theme: data
+                theme: {
+                    ...data,
+                    // Ensure typography is explicitly spread
+                    typography: data.typography 
+                }
             };
             
-            // Re-apply options to trigger instant UI update
+            // 2. Trigger the SDK update
             chat.setOptions(currentOptions);
-            console.log("UI Theme updated successfully.");
+            
+            // 3. Optional: Force a small layout check to ensure fonts apply
+            console.log("Design system refreshed.");
         }
     });
 

@@ -162,21 +162,16 @@ class MyChatKitServer(ChatKitServer[RequestContext]):
             yield ProgressUpdateEvent(text="Applying new styles...", icon="sparkle")
             await asyncio.sleep(1)  # Fake delay for effect
 
-            # 2. Emit the Client Effect!
-            # This 'name' will be listened for in index.html
-            yield ClientEffectEvent(
-                name="update_ui_theme",
-                data=action.payload,  # The theme object from preview_theme tool
-            )
+            # The payload now contains the full theme dictionary built by the tool
+            yield ClientEffectEvent(name="update_ui_theme", data=action.payload)
 
-            # 3. Confirm in chat
             yield ThreadItemDoneEvent(
                 item=AssistantMessageItem(
                     id=self.store.generate_item_id("message", thread, context),
                     thread_id=thread.id,
                     created_at=datetime.now(),
                     content=[
-                        AssistantMessageContent(text="Theme applied successfully!")
+                        AssistantMessageContent(text="Theme updated successfully!")
                     ],
                 )
             )
@@ -210,7 +205,7 @@ class MyChatKitServer(ChatKitServer[RequestContext]):
 
             # Call GPT for a quick summary
             res = await client.chat.completions.create(
-                model="gpt-5-mini",
+                model="gpt-4o-mini",
                 messages=[
                     {
                         "role": "system",
