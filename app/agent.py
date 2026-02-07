@@ -1,4 +1,4 @@
-from agents import Agent
+from agents import Agent, StopAtTools
 from agents.tool import ImageGenerationTool, WebSearchTool
 from .tools import (
     get_weather,
@@ -6,6 +6,8 @@ from .tools import (
     analyze_sales_data,
     generate_deep_research_report,
 )
+from dotenv import load_dotenv
+load_dotenv()
 
 # Initialize Tools
 image_tool = ImageGenerationTool(
@@ -52,4 +54,5 @@ my_agent = Agent(
         analyze_sales_data,
         generate_deep_research_report,
     ],
+    tool_use_behavior=StopAtTools(stop_at_tool_names=[analyze_sales_data.name])
 )

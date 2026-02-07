@@ -41,7 +41,10 @@ from .types import RequestContext
 from .agent import my_agent
 from .tools import MOCK_ENTITIES 
 
-client = AsyncOpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
+from dotenv import load_dotenv
+load_dotenv()
+
+client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 UPLOAD_DIR = Path("uploads")
 
 
@@ -250,6 +253,6 @@ class MyChatKitServer(ChatKitServer[RequestContext]):
         f = io.BytesIO(audio_input.data)
         f.name = "voice.webm"
         transcription = await client.audio.transcriptions.create(
-            model="whisper-1", file=f
+            model="gpt-4o-mini-transcribe", file=f
         )
         return TranscriptionResult(text=transcription.text)
