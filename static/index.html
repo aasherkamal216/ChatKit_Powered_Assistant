@@ -35,9 +35,34 @@
             height: 100%; 
             width: 100%; 
         }
+
+        .theme-toggle {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            border: none;
+            background: transparent;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #666;
+            transition: all 0.2s ease;
+            z-index: 10;
+        }
+        
+        .theme-toggle:hover {
+            background: rgba(0,0,0,0.08);
+            color: #000;
+        }
     </style>
 </head>
 <body>
+
+<button id="theme-btn" class="theme-toggle"></button>
 
 <div id="chat-container">
     <openai-chatkit id="chat"></openai-chatkit>
@@ -154,6 +179,89 @@
     // 5. Initialize Chat
     chat.setOptions(currentOptions);
 
+    // Theme Toggle Logic
+    const themeBtn = document.getElementById('theme-btn');
+    
+    function updateThemeState() {
+        // If theme is not set, default to light
+        const theme = currentOptions.theme || {};
+        const isDark = (theme.colorScheme === 'dark');
+        const radius = theme.radius || 'lg';
+        
+        // 1. Handle Icons
+        const iconSun = `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/></svg>`;
+        const iconMoon = `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></svg>`;
+
+        // 2. Update Toggle Button
+        themeBtn.innerHTML = isDark ? iconSun : iconMoon;
+        
+        if (isDark) {
+            themeBtn.style.color = '#ccc';
+            themeBtn.onmouseover = () => { themeBtn.style.background = 'rgba(255,255,255,0.1)'; themeBtn.style.color = '#fff'; };
+            themeBtn.onmouseout = () => { themeBtn.style.background = 'transparent'; themeBtn.style.color = '#ccc'; };
+        } else {
+            themeBtn.style.color = '#666';
+            themeBtn.onmouseover = () => { themeBtn.style.background = 'rgba(0,0,0,0.08)'; themeBtn.style.color = '#000'; };
+            themeBtn.onmouseout = () => { themeBtn.style.background = 'transparent'; themeBtn.style.color = '#666'; };
+        }
+        
+        // 3. Update Page Background
+        let bg = isDark ? '#111' : '#f0f2f5';
+        
+        // If the theme provides granular color controls (from 'preview_theme' tool)
+        // We can derive a harmonious background color from the grayscale hue.
+        if (theme.color && theme.color.grayscale) {
+            const hue = theme.color.grayscale.hue || 210;
+            if (isDark) {
+                // Dark mode: Very dark desaturated version of the hue
+                bg = `hsl(${hue}, 20%, 10%)`;
+            } else {
+                // Light mode: Very light desaturated version of the hue
+                bg = `hsl(${hue}, 20%, 96%)`;
+            }
+        }
+        
+        document.body.style.background = bg;
+
+        // 4. Update Container Radius
+        const radiusMap = {
+            'none': '0px',
+            'sharp': '0px',
+            '0': '0px',
+            'sm': '8px',
+            'md': '12px',
+            'lg': '16px',
+            'xl': '24px',
+            'pill': '24px', 
+            'full': '32px'
+        };
+        const containerRadius = radiusMap[radius] || '16px';
+        document.getElementById('chat-container').style.borderRadius = containerRadius;
+    }
+
+    themeBtn.addEventListener('click', () => {
+        const isDark = (currentOptions.theme && currentOptions.theme.colorScheme === 'dark');
+        const newScheme = isDark ? 'light' : 'dark';
+        
+        // Update local options
+        currentOptions = {
+            ...currentOptions,
+            theme: {
+                ...currentOptions.theme,
+                colorScheme: newScheme
+            }
+        };
+        
+        // Apply to ChatKit
+        chat.setOptions(currentOptions);
+        
+        // Update UI
+        updateThemeState();
+    });
+
+    // Initial check
+    updateThemeState();
+
     // 6. LISTEN FOR CLIENT EFFECTS
     // This allows the server to change the UI look and feel or trigger local logic.
     chat.addEventListener('chatkit.effect', (event) => {
@@ -166,9 +274,12 @@
             currentOptions = {
                 ...currentOptions,
                 theme: {
-                    ...data,
-                    // Ensure typography is explicitly spread
-                    typography: data.typography 
+                    ...currentOptions.theme, // Preserve existing properties first
+                    ...data,                 // Overwrite with new data
+                    // If data.typography is present, we might want to be careful, but usually it's an object replacement.
+                    // If data.typography is undefined, we keep the old one (via ...currentOptions.theme).
+                    // If data.typography is defined, it overwrites.
+                    typography: data.typography || currentOptions.theme.typography
                 }
             };
             
@@ -177,6 +288,9 @@
             
             // 3. Optional: Force a small layout check to ensure fonts apply
             console.log("Design system refreshed.");
+
+            // 4. Update the toggle button to reflect external changes
+            updateThemeState();
         }
     });
 
