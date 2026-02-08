@@ -2,6 +2,7 @@ import io
 import base64
 import asyncio
 import json
+import aiofiles
 from pathlib import Path
 from typing import AsyncIterator, Any, List
 from datetime import datetime
@@ -34,14 +35,16 @@ from chatkit.agents import (
     stream_agent_response,
     ThreadItemConverter,
     ResponseStreamConverter,
+    simple_to_agent_input,
 )
 from agents import Runner
 
 from .types import RequestContext
 from .agent import my_agent
-from .tools import MOCK_ENTITIES 
+from .tools import MOCK_ENTITIES
 
 from dotenv import load_dotenv
+
 load_dotenv()
 
 client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
@@ -52,16 +55,10 @@ class LocalConverter(ThreadItemConverter):
     async def tag_to_message_content(
         self, tag: UserMessageTagContent
     ) -> ResponseInputTextParam:
-        """
-        Deep Entity Integration:
-        Instead of just passing the tag name, we look up the ID in our database (MOCK_ENTITIES)
-        and inject the actual data into the prompt.
-        """
         entity_id = tag.id
         entity_data = MOCK_ENTITIES.get(entity_id)
 
         if entity_data:
-            # Inject rich context so the model knows the status without tool calling
             context_block = (
                 f"<ORDER_CONTEXT id='{entity_id}'>\n"
                 f"  Title: {entity_data.get('title')}\n"
@@ -70,11 +67,9 @@ class LocalConverter(ThreadItemConverter):
                 f"</ORDER_CONTEXT>"
             )
             return ResponseInputTextParam(
-                type="input_text", 
-                text=f"\n[User tagged an entity]\n{context_block}\n"
+                type="input_text", text=f"\n[User tagged an entity]\n{context_block}\n"
             )
-        
-        # Fallback if ID not found
+
         return ResponseInputTextParam(
             type="input_text", text=f"\n[User tagged: {tag.text}]\n"
         )
@@ -86,8 +81,8 @@ class LocalConverter(ThreadItemConverter):
         if not file_path:
             return ResponseInputTextParam(type="input_text", text="[File not found]")
 
-        with open(file_path, "rb") as f:
-            file_bytes = f.read()
+        async with aiofiles.open(file_path, "rb") as f:
+            file_bytes = await f.read()
 
         if isinstance(attachment, ImageAttachment) or attachment.mime_type.startswith(
             "image/"
@@ -116,10 +111,6 @@ class LocalResponseConverter(ResponseStreamConverter):
         return f"data:image/png;base64,{base64_image}"
 
     async def url_citation_to_annotation(self, citation) -> Annotation:
-        """
-        Enable Citations:
-        Converts OpenAI Response citations into interactive ChatKit Annotations.
-        """
         return Annotation(
             source=URLSource(
                 url=citation.url,
@@ -138,44 +129,61 @@ class MyChatKitServer(ChatKitServer[RequestContext]):
         context: RequestContext,
     ) -> AsyncIterator[ThreadStreamEvent]:
 
-        items_page = await self.store.load_thread_items(
-            thread.id, None, 20, "desc", context
-        )
-        items = list(reversed(items_page.data))
+        # 1. Performance: Check for a previous response ID (Responses API State)
+        # This prevents re-sending full history, making TTFT extremely fast.
+        last_response_id = thread.metadata.get("last_response_id")
 
-        # Auto-title generation for new threads
-        if len(items) <= 1 and input_message:
-            asyncio.create_task(self._generate_thread_title(thread, items, context))
+        # 2. If we have a stateful ID, we only need to send the NEW message.
+        # Otherwise (first message), we send the history.
+        if last_response_id and input_message:
+            converter = LocalConverter()
+            agent_inputs = await converter.to_agent_input([input_message])
+        else:
+            items_page = await self.store.load_thread_items(
+                thread.id, None, 15, "desc", context
+            )
+            items = list(reversed(items_page.data))
+            converter = LocalConverter()
+            agent_inputs = await converter.to_agent_input(items)
+
+        # 3. Handle Model Switching / Tool Forcing
+        if input_message and input_message.inference_options:
+            if input_message.inference_options.model:
+                my_agent.model = input_message.inference_options.model
+            if input_message.inference_options.tool_choice:
+                my_agent.model_settings.tool_choice = (
+                    input_message.inference_options.tool_choice.id
+                )
 
         agent_context = AgentContext(
             thread=thread, store=self.store, request_context=context
         )
 
-        converter = LocalConverter()
-        agent_inputs = await converter.to_agent_input(items)
-
-
-        if input_message and input_message.inference_options:
-            # 1. Handle Model Switching
-            if input_message.inference_options.model:
-                my_agent.model = input_message.inference_options.model
-
-            # 2. Handle Tool Forcing
-            if input_message.inference_options.tool_choice:
-                tool_id = input_message.inference_options.tool_choice.id
-                my_agent.model_settings.tool_choice = tool_id
-
-        # Pass run_kwargs to the runner
+        # 4. Use the Responses API specialized runner
+        # auto_previous_response_id ensures the SDK handles the chaining for us.
         result = Runner.run_streamed(
-            my_agent, 
-            agent_inputs, 
+            my_agent,
+            agent_inputs,
             context=agent_context,
+            previous_response_id=last_response_id,
+            auto_previous_response_id=True,
         )
 
         async for event in stream_agent_response(
             agent_context, result, converter=LocalResponseConverter(partial_images=3)
         ):
             yield event
+
+        # 5. Performance: Capture and persist the new response ID for the next turn
+        if result.last_response_id:
+            thread.metadata["last_response_id"] = result.last_response_id
+            await self.store.save_thread(thread, context)
+
+        # Auto-title generation (non-blocking)
+        if not thread.title and input_message:
+            asyncio.create_task(
+                self._generate_thread_title(thread, [input_message], context)
+            )
 
     async def action(
         self,
@@ -186,14 +194,8 @@ class MyChatKitServer(ChatKitServer[RequestContext]):
     ) -> AsyncIterator[ThreadStreamEvent]:
 
         if action.type == "apply_theme_effect":
-            # 1. Send a "Thinking" progress update
             yield ProgressUpdateEvent(text="Applying new styles...", icon="sparkle")
-            await asyncio.sleep(0.5) 
-
-            # 2. Trigger Client Effect
             yield ClientEffectEvent(name="update_ui_theme", data=action.payload)
-
-            # 3. Respond in chat
             yield ThreadItemDoneEvent(
                 item=AssistantMessageItem(
                     id=self.store.generate_item_id("message", thread, context),
@@ -204,7 +206,6 @@ class MyChatKitServer(ChatKitServer[RequestContext]):
                     ],
                 )
             )
-
         elif action.type == "submit_feedback":
             yield ThreadItemDoneEvent(
                 item=AssistantMessageItem(
@@ -235,17 +236,15 @@ class MyChatKitServer(ChatKitServer[RequestContext]):
                 messages=[
                     {
                         "role": "system",
-                        "content": "Summarize this message into a 3-word title. Return only the title text.",
+                        "content": "Summarize into a 3-word title. Text only.",
                     },
                     {"role": "user", "content": first_text},
                 ],
             )
-            new_title = res.choices[0].message.content.strip().replace('"', "")
-
-            thread.title = new_title
+            thread.title = res.choices[0].message.content.strip().replace('"', "")
             await self.store.save_thread(thread, context)
-        except Exception as e:
-            print(f"Titling error: {e}")
+        except:
+            pass
 
     async def transcribe(
         self, audio_input: AudioInput, context: RequestContext

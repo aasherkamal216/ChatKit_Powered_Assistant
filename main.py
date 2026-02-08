@@ -1,14 +1,17 @@
 import os
 import shutil
 import base64
+import asyncio
 from pathlib import Path
 from uuid import uuid4
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request, UploadFile, Depends, Response
 from fastapi.responses import StreamingResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
+import aiofiles
 
 from chatkit.server import StreamingResult
 from chatkit.types import FileAttachment, ImageAttachment
@@ -19,7 +22,22 @@ from app.types import RequestContext
 
 load_dotenv()
 
-app = FastAPI()
+UPLOAD_DIR = Path("uploads")
+UPLOAD_DIR.mkdir(exist_ok=True)
+
+# Initialize store globally, but connect in lifespan
+store = SQLiteStore()
+server = MyChatKitServer(store=store, attachment_store=store)
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup: Connect to DB
+    await store.connect()
+    yield
+    # Shutdown: Close DB
+    await store.close()
+
+app = FastAPI(lifespan=lifespan)
 
 # --- Enable CORS ---
 app.add_middleware(
@@ -29,11 +47,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-UPLOAD_DIR = Path("uploads")
-UPLOAD_DIR.mkdir(exist_ok=True)
-store = SQLiteStore()
-server = MyChatKitServer(store=store, attachment_store=store)
 
 def get_user(request: Request) -> RequestContext:
     user_id = request.headers.get("x-chatkit-user")
@@ -63,17 +76,17 @@ async def upload_file(file: UploadFile, ctx: RequestContext = Depends(get_user))
     safe_filename = f"{file_id}{ext}"
     file_path = UPLOAD_DIR / safe_filename
     
-    # 1. Save the file locally for the Agent to use
-    with open(file_path, "wb") as f:
-        shutil.copyfileobj(file.file, f)
+    # Non-blocking file write
+    async with aiofiles.open(file_path, "wb") as f:
+        while content := await file.read(1024 * 1024):  # Read in 1MB chunks
+            await f.write(content)
         
     is_image = file.content_type.startswith("image/")
     
-    # 2. --- Generate Base64 for the Preview ---
-    # This avoids the "Mixed Content" block in the browser UI
     if is_image:
-        with open(file_path, "rb") as f:
-            file_bytes = f.read()
+        # Non-blocking read for preview generation
+        async with aiofiles.open(file_path, "rb") as f:
+            file_bytes = await f.read()
             b64_data = base64.b64encode(file_bytes).decode("utf-8")
             preview_data_url = f"data:{file.content_type};base64,{b64_data}"
             
@@ -82,7 +95,7 @@ async def upload_file(file: UploadFile, ctx: RequestContext = Depends(get_user))
             id=file_id, 
             name=file.filename,
             mime_type=file.content_type, 
-            preview_url=preview_data_url, # Use the Data URL here
+            preview_url=preview_data_url, 
             url=f"http://localhost:8000/files/{safe_filename}"
         )
     else:
@@ -102,4 +115,5 @@ app.mount("/", StaticFiles(directory="static", html=True), name="static")
 
 if __name__ == "__main__":
     import uvicorn
+    # Workers=1 is fine for async, but ensure reload is off in actual production
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)

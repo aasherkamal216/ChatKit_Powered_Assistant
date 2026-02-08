@@ -11,4 +11,5 @@ wheels/
 .env
 
 *.db
+*.db-[a-zA-Z0-9]*
 uploads/

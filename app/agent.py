@@ -57,6 +57,5 @@ my_agent = Agent(
         get_weather,
         analyze_sales_data,
         generate_deep_research_report,
-    ],
-    tool_use_behavior=StopAtTools(stop_at_tool_names=[analyze_sales_data.name, preview_theme.name])
+    ]
 )

@@ -94,20 +94,23 @@ async def preview_theme(
     widget = build_clean_theme_widget(reasoning, theme_data)
     await ctx.context.stream_widget(widget)
 
-    return "Theme proposal displayed."
+    return "Theme proposal displayed. Do not repeat the details, the user can see them in the widget above."
 
 
 @function_tool
 async def get_weather(ctx: RunContextWrapper[AgentContext], location: str):
     """Get the current weather with a vibrant UI card."""
+    temp = 72
+    condition_desc = "Sunny sky and warm temperatures are expected for the rest of the afternoon."
+    
     # Realistically you'd call a weather API here
     widget = build_vibrant_weather_widget(
         location=location,
-        temperature="72",
-        condition_desc="Sunny sky and warm temperatures are expected for the rest of the afternoon.",
+        temperature=str(temp),
+        condition_desc=condition_desc,
     )
     await ctx.context.stream_widget(widget)
-    return f"Showed weather card for {location}."
+    return f"Showed weather card for {location}: {temp}°F, {condition_desc}"
 
 
 @function_tool
@@ -197,7 +200,7 @@ async def analyze_sales_data(
     widget = build_sales_dashboard(data, region)
     await ctx.context.stream_widget(widget)
 
-
+    return "Sales data analyzed and chart displayed to user."
 
 @function_tool
 async def generate_deep_research_report(
