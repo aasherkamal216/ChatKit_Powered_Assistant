@@ -1,7 +1,6 @@
 import io
 import base64
 import asyncio
-import json
 import aiofiles
 from pathlib import Path
 from typing import AsyncIterator, Any, List
@@ -173,6 +172,10 @@ class MyChatKitServer(ChatKitServer[RequestContext]):
             agent_context, result, converter=LocalResponseConverter(partial_images=3)
         ):
             yield event
+
+        # Reset tool choice after response
+        my_agent.model_settings.tool_choice = None
+        my_agent.reset_tool_choice = True
 
         # 5. Performance: Capture and persist the new response ID for the next turn
         if result.last_response_id:
